@@ -346,6 +346,187 @@ namespace Draw_Balloon_net
             }
         }
         #endregion
+
+
+        #region Intersection of the two entities. 
+        enum State
+        {
+            LineType, CircleType
+        }
+
+        [CommandMethod("intersectEntities")]
+        public void intersectEntities()
+        {
+            Document doc = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument;
+            Database db = doc.Database;
+            Editor ed = doc.Editor;
+
+            Line firstLine = null;
+            Line secondLine = null;
+            Circle cir = null;
+            Entity ent = null;
+            State st = State.LineType;
+            
+            using (Transaction trans = db.TransactionManager.StartTransaction())
+            {
+                //Select first polyline
+                PromptEntityOptions ptEntityOpt = new PromptEntityOptions("Select firtst line:");
+                PromptEntityResult ptEntityRes = ed.GetEntity(ptEntityOpt);
+                if (ptEntityRes.Status != PromptStatus.OK)
+                {
+                    return;
+                }
+
+                //Get the polyline entity
+                ent = (Entity)trans.GetObject(ptEntityRes.ObjectId, OpenMode.ForRead);
+                if (ent is Line)
+                {
+                    firstLine = ent as Line;
+                }
+
+                //Select 2nd polyline
+                ptEntityOpt = new PromptEntityOptions("\n Select the second line or the circle:");
+                ptEntityRes = ed.GetEntity(ptEntityOpt);
+                if (ptEntityRes.Status != PromptStatus.OK)
+                {
+                    return;
+                }
+
+                ent = (Entity)trans.GetObject(ptEntityRes.ObjectId, OpenMode.ForRead);
+                if (ent is Line)
+                {
+                    secondLine = ent as Line;                   
+                }
+                else if (ent is Circle)
+                {
+                    cir = ent as Circle;
+                    st = State.CircleType;
+                }
+
+                Point3dCollection pts3D = new Point3dCollection();
+
+                //Get the intersection Points.
+                switch (st)
+                {
+                    case State.LineType:
+                        firstLine.IntersectWith(secondLine, Intersect.OnBothOperands, pts3D, IntPtr.Zero, IntPtr.Zero);
+                        break;
+
+                    case State.CircleType:
+                        firstLine.IntersectWith(cir, Intersect.OnBothOperands, pts3D, IntPtr.Zero, IntPtr.Zero);
+                        break;
+
+                    default:
+                        break;
+                }
+                
+                foreach (Point3d pt in pts3D)
+                {                    
+                    ed.WriteMessage("Point number: " + pt.X + " " + pt.Y + " " + pt.Z);
+                    //Autodesk.AutoCAD.ApplicationServices.Application.ShowAlertDialog("\n Intersection Point: " + "\nX = " + pt.X + "\nY = " + pt.Y + "\nZ = " + pt.Z);
+                }
+
+                trans.Commit();
+            }
+        }
+        #endregion
+
+
+        #region Make the cyclinder
+        [CommandMethod("MakeCylinder")]
+        public void makeCylinder()
+        {
+            Editor ed = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument.Editor;
+
+            string getPointMessage = "Pick the center point: ";
+            Point3d ptCenter = getPointWith(getPointMessage, ed);
+            if (ptCenter.IsEqualTo(new Point3d(-1, -1, -1)))
+            {
+                return;
+            }
+
+            // Get the radius of the cylinder.
+            string radiusMessage = "Pick the radius of cylinder: ";
+            int radius = getValueWith(radiusMessage, ed);
+            if (radius == -1)
+            {
+                return;
+            }
+
+            // Get the height of the cylinder. 
+            string heightMessage = "Pick the height of the cylinder: ";            
+            int height = getValueWith(heightMessage, ed);
+            if (height == -1)
+            {
+                return;
+            }
+
+            Database dwg = Autodesk.AutoCAD.ApplicationServices.Application.DocumentManager.MdiActiveDocument.Database;
+
+            using (Transaction trans = dwg.TransactionManager.StartTransaction())
+            {
+                BlockTable blk = trans.GetObject(dwg.BlockTableId, OpenMode.ForWrite) as BlockTable;
+                if (blk == null)
+                {
+                    return;
+                }
+
+                Circle circle = new Circle(ptCenter, Vector3d.ZAxis, radius);
+
+                // make region.
+                DBObjectCollection dbObjCollec = new DBObjectCollection();
+                dbObjCollec.Add(circle);
+
+                DBObjectCollection regionObjCollec = Region.CreateFromCurves(dbObjCollec);
+                                         
+                Solid3d solid3d = new Solid3d();
+                solid3d.Extrude((Region)regionObjCollec[0], height, 0.0);
+
+                // append elements into database. 
+                BlockTableRecord blkRecord = trans.GetObject(blk[BlockTableRecord.ModelSpace], OpenMode.ForWrite) as BlockTableRecord;
+                blkRecord.AppendEntity(solid3d);                                              
+
+                trans.AddNewlyCreatedDBObject(solid3d, true);                
+
+                trans.Commit();
+            }
+        }
+
+        
+        private Point3d getPointWith(string message, Editor ed)
+        {
+            PromptPointOptions ptPointOpt = new PromptPointOptions(message);
+            PromptPointResult ptPointRes = ed.GetPoint(ptPointOpt);
+            Point3d ptUCS = new Point3d(-1, -1, -1);
+
+            if (ptPointRes.Status != PromptStatus.OK)
+            {
+                return ptUCS;
+            }
+
+            // Turn the point at UCS into the point at WCS.
+            ptUCS = ptPointRes.Value;
+            Point3d ptWCS = ptUCS.TransformBy(ed.CurrentUserCoordinateSystem);
+
+            return ptWCS;
+        }
+
+        private int getValueWith(string message, Editor ed)
+        {
+            PromptIntegerOptions ptIntegerOpt = new PromptIntegerOptions(message);
+            PromptIntegerResult ptIntegerRes = ed.GetInteger(ptIntegerOpt);
+
+            if (ptIntegerRes.Status != PromptStatus.OK)
+            {
+                return -1;
+            }
+
+            int radius = ptIntegerRes.Value;
+
+            return radius;
+        }
+        #endregion
+
     }
     #endregion
 
@@ -600,7 +781,6 @@ namespace Draw_Balloon_net
 
                                 lstGroup.Add(grp);
                             }
-
                         }
                     }
                 }
